@@ -1,0 +1,22 @@
+{
+  "name": "mermaid-parser-py",
+  "version": "0.0.1",
+  "description": "",
+  "main": "parser.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "mermaid": "^11.11.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.6",
+    "@rollup/plugin-node-resolve": "^16.0.1",
+    "i": "^0.3.7",
+    "magic-string": "^0.30.18",
+    "npm": "^11.6.0",
+    "rollup": "^4.50.0"
+  }
+}
