@@ -1,11 +1,10 @@
 [project]
 name = "mermaid-parser-py"
-version = "0.0.1"
+version = "0.0.2"
 description = "Parse Mermaid into manipulable Python objects"
 authors = [
     {name = "Boqi Chen",email = "boqi.chen@mail.mcgill.ca"}
 ]
-repository = "https://github.com/20001LastOrder/mermaid-parser-py"
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = "<4.0,>=3.11"
@@ -16,6 +15,9 @@ dependencies = [
     "networkx (>=3.5,<4.0)",
     "loguru (>=0.7.3,<0.8.0)"
 ]
+
+[project.urls]
+homepage = "https://github.com/20001LastOrder/mermaid-parser-py"
 
 [tool.poetry]
 packages = [

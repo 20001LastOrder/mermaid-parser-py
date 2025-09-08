@@ -1,6 +1,8 @@
 # mermaid-py-parser
 Parse a mermaid text into editable objects. 
 
+**Repository link**: [20001LastOrder/mermaid-parser-py](https://github.com/20001LastOrder/mermaid-parser-py)
+
 ## Motivation
 
 I love Mermaid syntax for it's simplicity and expressiveness in creating diagrams. And I use them in a couple of my projects. However, I found that the lack of a robust Python library for parsing and manipulating Mermaid diagrams was a significant limitation.
