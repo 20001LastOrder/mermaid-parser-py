@@ -130,11 +130,10 @@ class StateDiagramConverter:
 
         Creates HistoryState objects for composite states that have history transitions.
         """
-        # Patterns to detect history state notes with explicit target
+        # Patterns to detect history state notes with EXPLICIT target ONLY
+        # Only accepts: "returns to StateName history state" or "transitions to StateName history state"
         history_patterns = [
-            r"(?:transitions?\s+to|returns?\s+to|resumes?\s+to?)\s+(\w+)\s+history\s+state",
-            r"(\w+)\s+history\s+state",
-            r"history\s+state\s+(?:of\s+)?(\w+)",
+            r"(?:transitions?\s+to|returns?\s+to)\s+(\w+)\s+history\s+state",
         ]
 
         # Build a map of state -> parent composite for inferring history targets
@@ -170,6 +169,7 @@ class StateDiagramConverter:
             source_id = getattr(source_state, "id_", None) if source_state else None
 
             # Build list of states to check for transitions (source + its children)
+            # This is needed for finding transitions that should go to history
             states_to_check = [source_id] if source_id else []
             # Add children of the source state (note might be on a composite containing the actual source)
             for state_key, state in all_states.items():
@@ -178,46 +178,17 @@ class StateDiagramConverter:
                     child_id = getattr(state, "id_", state_key)
                     states_to_check.append(child_id)
 
-            # If no explicit target found, infer from context
-            if not target_composite and states_to_check:
-                # Find transitions FROM the source state or its children with "resume" in the label
-                for transition in transitions:
-                    from_state = getattr(transition, "from_state", None)
-                    from_id = getattr(from_state, "id_", None) if from_state else None
-
-                    if from_id in states_to_check:
-                        label = getattr(transition, "label", "") or ""
-                        # Check if this is a resume-like transition
-                        if "resume" in label.lower():
-                            to_state = getattr(transition, "to_state", None)
-                            to_id = getattr(to_state, "id_", None) if to_state else None
-
-                            if to_id:
-                                # The target composite could be:
-                                # 1. The destination itself if it's a composite state
-                                # 2. The parent of the destination state
-                                # Check if destination is a composite (has children)
-                                dest_is_composite = any(
-                                    getattr(s, "parent_id", None) == to_id
-                                    for s in all_states.values()
-                                )
-                                if dest_is_composite:
-                                    target_composite = to_id
-                                    logger.debug(
-                                        f"Inferred history target '{target_composite}' (composite destination) from transition {from_id} -> {to_id}"
-                                    )
-                                elif to_id in state_to_parent:
-                                    target_composite = state_to_parent[to_id]
-                                    logger.debug(
-                                        f"Inferred history target '{target_composite}' from transition {from_id} -> {to_id}"
-                                    )
-                                break
-
+            # NO INFERENCE: If no explicit target found, raise an error
             if not target_composite:
-                logger.warning(
-                    f"Could not determine history state target from note on '{source_id}'. States checked: {states_to_check}"
+                error_msg = (
+                    f"History state target must be explicitly mentioned in note. "
+                    f"Note on state '{source_id}' contains 'history' but does not explicitly "
+                    f"specify which state should have the history pseudo-state. "
+                    f"Expected pattern: 'returns to StateName history state' or 'transitions to StateName history state'. "
+                    f"Note content: '{note.content}'"
                 )
-                continue
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
             logger.debug(f"History target identified: '{target_composite}'")
 
