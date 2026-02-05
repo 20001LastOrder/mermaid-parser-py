@@ -1,7 +1,6 @@
 from loguru import logger
 from mermaid_parser.structs.state_diagram import (
     StateDiagramWithNote,
-    Note,
     HistoryState,
 )
 from mermaid.statediagram.state import Composite, Concurrent, End, Start, State
@@ -11,13 +10,12 @@ import networkx as nx
 import re
 
 """
-Currently, this class gives basic support for converting flat state diagrams with notes.
+Currently, this class gives basic support for converting flat state diagrams.
 Supports:
 - Basic states and transitions
 - Composite (hierarchical) states
 - Parallel regions (via -- separator)
-- Notes attached to states
-- History states (shallow) via note indicators
+- History states (shallow)
 
 # TODO: Add support for Fork and Join transitions
 # TODO: Add support for Choice transitions
@@ -45,12 +43,9 @@ class StateDiagramConverter:
             raise ValueError(f"Unsupported graph type: {graph_type}")
 
         all_states = {}
-        states, transitions, notes = self._convert_state_diagram(
+        states, transitions = self._convert_state_diagram(
             parsed_data["graph_data"]["rootDoc"], all_states
         )
-
-        # Process notes to detect history state indicators and create history states
-        self._process_history_notes(notes, all_states, transitions)
 
         # Add history states to the states list
         for history_state in self.history_states.values():
@@ -63,7 +58,6 @@ class StateDiagramConverter:
             title="State Diagram",
             states=states,
             transitions=transitions,
-            notes=notes,
             version="v2",
             root_initial_state=root_initial_state,
             initial_states=initial_states,
@@ -117,153 +111,15 @@ class StateDiagramConverter:
 
         return root_initial_state, initial_states
 
-    def _process_history_notes(
-        self, notes: list, all_states: dict, transitions: list
-    ) -> None:
-        """
-        Process notes to detect history state indicators.
-        Patterns detected:
-        - "transitions to ... history state"
-        - "returns to ... history state"
-        - "resume" combined with history indication
-        - Generic "history state" (infers target from context)
-
-        Creates HistoryState objects for composite states that have history transitions.
-        """
-        # Patterns to detect history state notes with EXPLICIT target ONLY
-        # Only accepts: "returns to StateName history state" or "transitions to StateName history state"
-        history_patterns = [
-            r"(?:transitions?\s+to|returns?\s+to)\s+(\w+)\s+history\s+state",
-        ]
-
-        # Build a map of state -> parent composite for inferring history targets
-        state_to_parent = {}
-        for state_key, state in all_states.items():
-            parent_id = getattr(state, "parent_id", None)
-            if parent_id:
-                state_id = getattr(state, "id_", state_key)
-                state_to_parent[state_id] = parent_id
-
-        for note in notes:
-            note_text = note.content.lower()
-            logger.debug(
-                f"Processing note: '{note.content}' on state: {getattr(note.target_state, 'id_', 'unknown')}"
-            )
-
-            # Check if this note indicates a history state
-            if "history" not in note_text:
-                continue
-
-            logger.debug(f"Found history note: '{note.content}'")
-
-            # Try to extract the target composite state name from the note text
-            target_composite = None
-            for pattern in history_patterns:
-                match = re.search(pattern, note_text, re.IGNORECASE)
-                if match:
-                    target_composite = match.group(1)
-                    break
-
-            # Get the source state (note is attached to it)
-            source_state = note.target_state
-            source_id = getattr(source_state, "id_", None) if source_state else None
-
-            # Build list of states to check for transitions (source + its children)
-            # This is needed for finding transitions that should go to history
-            states_to_check = [source_id] if source_id else []
-            # Add children of the source state (note might be on a composite containing the actual source)
-            for state_key, state in all_states.items():
-                parent = getattr(state, "parent_id", None)
-                if parent == source_id:
-                    child_id = getattr(state, "id_", state_key)
-                    states_to_check.append(child_id)
-
-            # NO INFERENCE: If no explicit target found, raise an error
-            if not target_composite:
-                error_msg = (
-                    f"History state target must be explicitly mentioned in note. "
-                    f"Note on state '{source_id}' contains 'history' but does not explicitly "
-                    f"specify which state should have the history pseudo-state. "
-                    f"Expected pattern: 'returns to StateName history state' or 'transitions to StateName history state'. "
-                    f"Note content: '{note.content}'"
-                )
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-
-            logger.debug(f"History target identified: '{target_composite}'")
-
-            # Normalize the target composite name (case-insensitive lookup)
-            actual_composite = None
-            for state_key, state in all_states.items():
-                if (
-                    hasattr(state, "id_")
-                    and state.id_.lower() == target_composite.lower()
-                ):
-                    actual_composite = state.id_
-                    break
-
-            if not actual_composite:
-                logger.warning(
-                    f"Could not find composite state '{target_composite}' for history state"
-                )
-                continue
-
-            # Create a HistoryState for this composite state if not already created
-            if actual_composite not in self.history_states:
-                history_state = HistoryState(actual_composite)
-                history_state.parent_id = actual_composite  # Set parent relationship
-                self.history_states[actual_composite] = history_state
-                logger.debug(f"Created history state for composite: {actual_composite}")
-
-            # Find and update the transition that goes to history
-            # Check transitions from source state AND its children
-            if states_to_check:
-                for transition in transitions:
-                    from_state = getattr(transition, "from_state", None)
-                    from_id = getattr(from_state, "id_", None) if from_state else None
-
-                    if from_id not in states_to_check:
-                        continue
-
-                    to_state = getattr(transition, "to_state", None)
-                    to_id = getattr(to_state, "id_", None) if to_state else None
-                    label = getattr(transition, "label", "") or ""
-
-                    # Check if this transition should go to history:
-                    # - destination IS the target composite, OR
-                    # - destination is inside the target composite, OR
-                    # - label contains "resume"
-                    is_history_trans = False
-                    if to_id:
-                        # Check if destination is or is inside the composite
-                        if to_id == actual_composite:
-                            is_history_trans = True
-                        elif state_to_parent.get(to_id) == actual_composite:
-                            is_history_trans = True
-                        # Also check for resume transitions
-                        if "resume" in label.lower():
-                            is_history_trans = True
-
-                    if is_history_trans:
-                        # Mark this transition as going to history
-                        trigger = label or "auto"
-                        self.history_transitions[(from_id, trigger)] = actual_composite
-                        # Update transition destination to history state
-                        transition.to_state = self.history_states[actual_composite]
-                        transition.is_history_transition = True
-                        logger.debug(
-                            f"Updated transition {from_id} --{label}--> {to_id} to target {actual_composite} history state"
-                        )
-
     def _convert_states_and_notes(
         self,
         root_doc: list[dict],
         all_states: dict[str, State],
         parent_id: str = None,
         parent_path: str = None,
-    ) -> tuple[dict[str, State], list[Note], list[Transition]]:
+    ) -> tuple[dict[str, State], list[Transition]]:
         """
-        Extract and convert states, notes, and transitions from parsed state diagram data.
+        Extract and convert states and transitions from parsed state diagram data.
 
         Three-pass approach to correctly handle state hierarchy:
         1. First pass: Process state declarations (but not their nested content yet)
@@ -277,13 +133,12 @@ class StateDiagramConverter:
             parent_path: Full hierarchical path to parent, e.g. 'On_LoggedIn_Print' - used for scoped keys
 
         Returns:
-            Tuple of (states_dict, notes_list, transitions_list)
+            Tuple of (states_dict, transitions_list)
         """
         # If parent_path is not provided, use parent_id
         if parent_path is None:
             parent_path = parent_id
         states = {}  # Dict to store states by id
-        notes = []  # List to store notes
         transitions = []  # List to store transitions
         composite_states = []  # Track composite states for third pass
         divider_regions = []  # Track divider regions for parallel state handling
@@ -306,41 +161,21 @@ class StateDiagramConverter:
 
                 scoped_key = self._get_scoped_key(state_id, parent_path)
 
-                # Handle note items
-                if "note" in item:
-                    note_info = item["note"]
-                    # Find or create the target state
-                    if state_id not in states:
-                        state = self._create_state(
-                            item, parent_id, scoped_id=scoped_key
-                        )
-                        if state:
-                            states[state_id] = state
+                # Handle regular state items and composite states
+                if scoped_key not in all_states:
+                    state = self._create_state(item, parent_id, scoped_id=scoped_key)
+                    if state:
+                        states[state_id] = state
+                        all_states[scoped_key] = state
 
-                    note = Note(
-                        content=note_info["text"],
-                        target_state=states[state_id],
-                        position=note_info["position"],
-                    )
-                    notes.append(note)
+                        # If this is a composite state, save it for later processing
+                        if "doc" in item:
+                            composite_states.append((state_id, item["doc"]))
                 else:
-                    # Handle regular state items and composite states
-                    if scoped_key not in all_states:
-                        state = self._create_state(
-                            item, parent_id, scoped_id=scoped_key
-                        )
-                        if state:
-                            states[state_id] = state
-                            all_states[scoped_key] = state
-
-                            # If this is a composite state, save it for later processing
-                            if "doc" in item:
-                                composite_states.append((state_id, item["doc"]))
-                    else:
-                        # State already exists - just update description if provided
-                        description = item.get("description", "")
-                        if description and state_id in states:
-                            states[state_id].content = description
+                    # State already exists - just update description if provided
+                    description = item.get("description", "")
+                    if description and state_id in states:
+                        states[state_id].content = description
 
         # PASS 2: Recursively process nested content FIRST if we're at root level
         # This ensures deeply nested states exist before root tries to reference them
@@ -351,16 +186,13 @@ class StateDiagramConverter:
                 new_parent_path = (
                     f"{parent_path}_{comp_state_id}" if parent_path else comp_state_id
                 )
-                nested_states, nested_notes, nested_transitions = (
-                    self._convert_states_and_notes(
-                        comp_doc,
-                        all_states,
-                        parent_id=comp_state_id,
-                        parent_path=new_parent_path,
-                    )
+                nested_states, nested_transitions = self._convert_states_and_notes(
+                    comp_doc,
+                    all_states,
+                    parent_id=comp_state_id,
+                    parent_path=new_parent_path,
                 )
                 states.update(nested_states)
-                notes.extend(nested_notes)
                 transitions.extend(nested_transitions)
 
             # Then process root-level transitions
@@ -380,16 +212,13 @@ class StateDiagramConverter:
                 new_parent_path = (
                     f"{parent_path}_{comp_state_id}" if parent_path else comp_state_id
                 )
-                nested_states, nested_notes, nested_transitions = (
-                    self._convert_states_and_notes(
-                        comp_doc,
-                        all_states,
-                        parent_id=comp_state_id,
-                        parent_path=new_parent_path,
-                    )
+                nested_states, nested_transitions = self._convert_states_and_notes(
+                    comp_doc,
+                    all_states,
+                    parent_id=comp_state_id,
+                    parent_path=new_parent_path,
                 )
                 states.update(nested_states)
-                notes.extend(nested_notes)
                 transitions.extend(nested_transitions)
 
         # PASS 4: Process divider regions (parallel states)
@@ -401,7 +230,6 @@ class StateDiagramConverter:
             for region_data in parallel_info:
                 states.update(region_data["states"])
                 transitions.extend(region_data["transitions"])
-                notes.extend(region_data.get("notes", []))
 
             # Mark the parent state as having parallel regions
             # The parent state is in all_states, not the local states dict
@@ -422,7 +250,7 @@ class StateDiagramConverter:
                         f"Set parallel_regions on {parent_id}: {len(parallel_info)} regions"
                     )
 
-        return states, notes, transitions
+        return states, transitions
 
     def _create_state(
         self, state_info: dict, parent_id: str = None, scoped_id: str = None
@@ -824,13 +652,11 @@ class StateDiagramConverter:
                 f"{parent_path}_{region_name}" if parent_path else region_name
             )
 
-            region_states, region_notes, region_transitions = (
-                self._convert_states_and_notes(
-                    divider_doc,
-                    all_states,
-                    parent_id=parent_id,  # States belong to the same parent
-                    parent_path=region_parent_path,
-                )
+            region_states, region_transitions = self._convert_states_and_notes(
+                divider_doc,
+                all_states,
+                parent_id=parent_id,  # States belong to the same parent
+                parent_path=region_parent_path,
             )
 
             # Find the initial state for this region
@@ -854,7 +680,6 @@ class StateDiagramConverter:
                     "divider_id": divider_id,  # Original divider ID for reference
                     "states": region_states,
                     "transitions": region_transitions,
-                    "notes": region_notes,
                     "initial": initial_state,
                 }
             )
@@ -863,7 +688,7 @@ class StateDiagramConverter:
 
     def _convert_state_diagram(
         self, root_doc: list[dict], all_states: dict[str, State]
-    ) -> tuple[list[State], list[Transition], list[Note]]:
+    ) -> tuple[list[State], list[Transition]]:
         """
         Convert parsed state diagram data to StateDiagramWithNote object.
 
@@ -872,17 +697,15 @@ class StateDiagramConverter:
             all_states: Dictionary to store all states by id
 
         Returns:
-            Tuple of (state_list, transitions, notes)
+            Tuple of (state_list, transitions)
         """
-        # Convert states, notes, and transitions (recursively processes composite states)
-        states_dict, notes, transitions = self._convert_states_and_notes(
-            root_doc, all_states
-        )
+        # Convert states and transitions (recursively processes composite states)
+        states_dict, transitions = self._convert_states_and_notes(root_doc, all_states)
 
         # Create the state diagram from all_states (which includes both scoped and unscoped states)
         state_list = list(all_states.values())
 
-        return state_list, transitions, notes
+        return state_list, transitions
 
     # def to_networkx(self, state_diagram: StateDiagram) -> nx.DiGraph:
     #     G = nx.DiGraph()
