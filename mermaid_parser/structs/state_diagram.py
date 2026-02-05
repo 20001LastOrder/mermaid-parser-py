@@ -28,7 +28,7 @@ class HistoryState(State):
         return f"state {self.id_} <<history>>"
 
 
-class StateDiagramWithNote(StateDiagram):
+class ExtendedStateDiagram(StateDiagram):
     """
     Extending the StateDiagram class from mermaid.
     """
@@ -44,7 +44,7 @@ class StateDiagramWithNote(StateDiagram):
         root_initial_state: Optional[str] = None,
         initial_states: Optional[dict] = None,
     ) -> None:
-        """StateDiagramWithNote
+        """ExtendedStateDiagram
 
         Args:
             title (str): Title of the stateDiagram.

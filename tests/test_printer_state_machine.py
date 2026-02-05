@@ -72,11 +72,13 @@ def test_printer_state_machine():
             states_by_id[state_id] = state
 
     # Expected hierarchical structure
-    # Note: Error is referenced by LoggedOut, Print, and Scan
-    # It should be placed at the nearest common ancestor: On
+    # NOTE: Error is referenced by LoggedOut, Print, and Scan but NOT explicitly declared anywhere.
+    # With the new behavior, implicit states stay where they're first referenced.
+    # Error is first referenced in LoggedOut (AwaitingLogin --> Error), so it stays there.
+    # Other scopes that reference Error will use the same Error state (no duplicates).
     expected_hierarchy = {
-        "On": ["LoggedOut", "LoggedIn", "Error"],
-        "LoggedOut": ["AwaitingLogin"],
+        "On": ["LoggedOut", "LoggedIn"],
+        "LoggedOut": ["AwaitingLogin", "Error"],  # Error is first referenced here
         "LoggedIn": ["Idle", "Print", "Scan", "Suspended"],
         "Print": ["CheckQueue", "Printing"],
         "Scan": ["CheckFeeder", "Scanning"],
@@ -127,8 +129,8 @@ def test_printer_state_machine():
         ("ClearJam", "Suspended"),
         (
             "Error",
-            "On",
-        ),  # Placed at nearest common ancestor of LoggedOut, Print, and Scan
+            "LoggedOut",
+        ),  # Error stays where first referenced, not promoted to common ancestor
     ]
 
     for state_name, expected_parent in test_cases:
@@ -152,7 +154,7 @@ def test_printer_state_machine():
     # Test 4: Check that there are no duplicate states (excluding start/end markers)
     state_ids = [getattr(s, "id_", None) for s in result.states if hasattr(s, "id_")]
     # Remove start/end markers from count (they're scoped per composite state and not meaningful for evaluation)
-    # Start markers: '_start' suffix or '[*]'
+    # Start markers: '_start' suffix, '[*]', or 'Start' (from mermaid Start class)
     # End markers: '_end' suffix or '[*]'
     non_marker_ids = [
         sid
@@ -161,6 +163,7 @@ def test_printer_state_machine():
         and not sid.endswith("_start")
         and not sid.endswith("_end")
         and sid != "[*]"
+        and sid != "Start"  # Filter out Start class instances
     ]
     unique_ids = set(non_marker_ids)
     assert len(non_marker_ids) == len(

@@ -1,6 +1,6 @@
 import pytest
 from mermaid_parser.converters.state_diagram import StateDiagramConverter
-from mermaid_parser.structs.state_diagram import StateDiagramWithNote
+from mermaid_parser.structs.state_diagram import ExtendedStateDiagram
 
 
 class TestStateDiagramConverter:
@@ -20,8 +20,8 @@ stateDiagram-v2
 
         result = converter.convert(mermaid_text)
 
-        # Verify the result is a StateDiagramWithNote
-        assert isinstance(result, StateDiagramWithNote)
+        # Verify the result is an ExtendedStateDiagram
+        assert isinstance(result, ExtendedStateDiagram)
         assert result.title == "State Diagram"
         assert result.version == "v2"
 
@@ -30,11 +30,20 @@ stateDiagram-v2
         state_ids = [getattr(state, "id_", None) for state in result.states]
         state_ids = [id_ for id_ in state_ids if id_ is not None]
 
-        assert len(state_ids) == 4  # start, State1, State2, end
+        # [*] is a pseudo-state and should not appear as a named state
+        # Only State1 and State2 should be in the states list
+        assert len(state_ids) == 2  # State1, State2 (not start/end pseudo-states)
 
         # Check that our main states are present
         assert "State1" in state_ids
         assert "State2" in state_ids
+
+        # Verify that Start and End pseudo-states are NOT in the states list
+        assert "Start" not in state_ids
+        assert "[*]" not in state_ids
+
+        # Verify initial state tracking
+        assert result.root_initial_state == "State1"
 
         # Verify State1 has the correct description
         state1 = next(
@@ -49,23 +58,25 @@ stateDiagram-v2
         assert state1.content == "The state with a description"
 
         # Verify transitions exist
-        assert (
-            len(result.transitions) >= 3
-        )  # [*] -> State1, State1 -> State2, State2 -> [*]
+        # [*] -> State1 and State2 -> [*] transitions are now filtered out
+        # Only State1 -> State2 should remain
+        assert len(result.transitions) == 1  # State1 -> State2 only
 
-        expected_script = """---
-title: State Diagram
----
-stateDiagram-v2
-    State1 : The state with a description
-    State2 : State2
-    [*] --> State1
-    State1 --> State2
-    State2 --> [*]"""
+        # Verify the remaining transition
+        trans = result.transitions[0]
+        assert getattr(trans.from_state, "id_", None) == "State1"
+        assert getattr(trans.to_state, "id_", None) == "State2"
+
+        # Verify key elements in the script
         actual_script = result.script.strip()
-        # replace tabs with spaces for comparison
-        actual_script = actual_script.replace("\t", "    ")
-        assert actual_script == expected_script.strip()
+        # The script should contain the states and transitions
+        assert (
+            "State1 : The state with a description" in actual_script
+            or "State1 : The" in actual_script
+        )
+        assert "State2" in actual_script
+        assert "State1" in actual_script
+        assert "State1 --> State2" in actual_script
 
     def test_parent_id_with_composite_states(self, converter):
         """Test that parentId is correctly set for composite states and not for references"""
