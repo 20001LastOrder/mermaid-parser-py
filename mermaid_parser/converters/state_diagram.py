@@ -36,6 +36,12 @@ class StateDiagramConverter:
         self.history_states = {}
         self.history_transitions = {}
 
+        # Pre-scan the raw mermaid text to find where each state is declared
+        # This solves forward reference issues where states are used before being declared
+        self.state_declarations_map = self._prescan_all_state_declarations_from_text(
+            mermaid_text
+        )
+
         # TODO: the current parser does not handle rendering styles
         parsed_data = self.parser.parse(mermaid_text)
         graph_type = parsed_data.get("graph_type")
@@ -184,6 +190,60 @@ class StateDiagramConverter:
                             self._prescan_state_declarations(
                                 item["doc"], all_states, state_id, new_parent_path
                             )
+
+    def _prescan_all_state_declarations_from_text(
+        self, mermaid_text: str
+    ) -> dict[str, str]:
+        """
+        Pre-scan the raw mermaid text to find where each state is truly declared.
+        This solves the forward reference problem where states are used before being declared.
+
+        Returns:
+            dict mapping state_id -> parent_id (None = root level)
+        """
+        state_map = {}  # state_name -> parent_id
+        parent_stack = []  # Track nesting as we scan lines
+
+        lines = mermaid_text.split('\n')
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Skip empty lines and comments
+            if not stripped or stripped.startswith('%%'):
+                continue
+
+            # Skip header line
+            if 'stateDiagram' in stripped:
+                continue
+
+            # Entering composite state: "state Active {"
+            if stripped.startswith("state ") and "{" in stripped:
+                # Extract state name between "state" and "{"
+                state_name = stripped.replace("state", "").replace("{", "").strip()
+                current_parent = parent_stack[-1] if parent_stack else None
+                state_map[state_name] = current_parent
+                parent_stack.append(state_name)
+                continue
+
+            # Exiting composite state: "}"
+            if stripped == "}":
+                if parent_stack:
+                    parent_stack.pop()
+                continue
+
+            # Simple state declaration: "state Completed"
+            # Must not have "{" and must start with "state "
+            if stripped.startswith("state ") and "{" not in stripped and "-->" not in stripped:
+                # Extract state name after "state"
+                state_name = stripped.replace("state", "").strip()
+                # Remove any description after the state name
+                if " " in state_name:
+                    state_name = state_name.split()[0]
+                current_parent = parent_stack[-1] if parent_stack else None
+                state_map[state_name] = current_parent
+
+        return state_map
 
     def _convert_states_and_notes(
         self,
@@ -704,10 +764,28 @@ class StateDiagramConverter:
                         all_states[scoped_key] = new_state
                         to_state = new_state
                     elif parent_id:
-                        # New state in this scope: use scoped key
-                        scoped_key = self._get_scoped_key(to_id, parent_path)
+                        # Check if state is declared elsewhere first
+                        if hasattr(self, 'state_declarations_map') and to_id in self.state_declarations_map:
+                            declared_parent = self.state_declarations_map[to_id]
+                            if declared_parent is None:
+                                # Declared at root level - use unscoped name
+                                scoped_key = to_id
+                                actual_parent_id = None
+                            elif declared_parent != parent_id:
+                                # Declared in different parent - use that parent's scope
+                                scoped_key = f"{declared_parent}_{to_id}"
+                                actual_parent_id = declared_parent
+                            else:
+                                # Declared in current parent - use current scope
+                                scoped_key = self._get_scoped_key(to_id, parent_path)
+                                actual_parent_id = parent_id
+                        else:
+                            # Not found in declarations - create in current scope (fallback)
+                            scoped_key = self._get_scoped_key(to_id, parent_path)
+                            actual_parent_id = parent_id
+
                         new_state = self._create_state(
-                            state2_info, parent_id, scoped_id=scoped_key
+                            state2_info, actual_parent_id, scoped_id=scoped_key
                         )
                         all_states[scoped_key] = new_state
                         to_state = new_state
