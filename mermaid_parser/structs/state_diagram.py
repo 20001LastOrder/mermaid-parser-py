@@ -43,6 +43,7 @@ class ExtendedStateDiagram(StateDiagram):
         config: Optional[Config] = None,
         root_initial_state: Optional[str] = None,
         initial_states: Optional[dict] = None,
+        state_notes: Optional[dict] = None,
     ) -> None:
         """ExtendedStateDiagram
 
@@ -55,9 +56,11 @@ class ExtendedStateDiagram(StateDiagram):
             config (Optional[Config], optional): Configuration for the stateDiagram. Defaults to None.
             root_initial_state (Optional[str], optional): The root-level initial state ID. Defaults to None.
             initial_states (Optional[dict], optional): Map of composite state ID -> initial child state ID. Defaults to None.
+            state_notes (Optional[dict], optional): Map of state ID -> list of note text strings (entry/exit/do actions). Defaults to None.
         """  # noqa E501
         self.root_initial_state = root_initial_state
         self.initial_states = initial_states if initial_states is not None else {}
+        self.state_notes = state_notes if state_notes is not None else {}
         super().__init__(title, states, transitions, version, direction, config)
 
     def _build_script(self) -> None:
