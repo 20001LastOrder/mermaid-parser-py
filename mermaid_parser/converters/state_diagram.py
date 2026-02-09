@@ -30,11 +30,13 @@ class StateDiagramConverter:
         self.history_transitions = (
             {}
         )  # Maps (from_state, trigger) -> target_composite_state for history
+        self.state_notes = {}  # Maps state ID -> list of note text strings
 
     def convert(self, mermaid_text: str) -> ExtendedStateDiagram:
         # Reset history state tracking for each conversion
         self.history_states = {}
         self.history_transitions = {}
+        self.state_notes = {}
 
         # Pre-scan the raw mermaid text to find where each state is declared
         # This solves forward reference issues where states are used before being declared
@@ -83,6 +85,7 @@ class StateDiagramConverter:
             version="v2",
             root_initial_state=root_initial_state,
             initial_states=initial_states,
+            state_notes=self.state_notes,
         )
 
         # Attach history state info to the result for consumers
@@ -204,17 +207,17 @@ class StateDiagramConverter:
         state_map = {}  # state_name -> parent_id
         parent_stack = []  # Track nesting as we scan lines
 
-        lines = mermaid_text.split('\n')
+        lines = mermaid_text.split("\n")
 
         for line in lines:
             stripped = line.strip()
 
             # Skip empty lines and comments
-            if not stripped or stripped.startswith('%%'):
+            if not stripped or stripped.startswith("%%"):
                 continue
 
             # Skip header line
-            if 'stateDiagram' in stripped:
+            if "stateDiagram" in stripped:
                 continue
 
             # Entering composite state: "state Active {"
@@ -234,7 +237,11 @@ class StateDiagramConverter:
 
             # Simple state declaration: "state Completed"
             # Must not have "{" and must start with "state "
-            if stripped.startswith("state ") and "{" not in stripped and "-->" not in stripped:
+            if (
+                stripped.startswith("state ")
+                and "{" not in stripped
+                and "-->" not in stripped
+            ):
                 # Extract state name after "state"
                 state_name = stripped.replace("state", "").strip()
                 # Remove any description after the state name
@@ -307,6 +314,42 @@ class StateDiagramConverter:
 
             if item["stmt"] == "state":
                 state_id = item["id"]
+
+                # Extract note if present (e.g., entry/exit/do annotations)
+                if "note" in item and item["note"]:
+                    note_data = item["note"]
+                    note_text = (
+                        note_data.get("text", "")
+                        if isinstance(note_data, dict)
+                        else str(note_data)
+                    )
+                    if note_text:
+                        if state_id not in self.state_notes:
+                            self.state_notes[state_id] = []
+                        self.state_notes[state_id].append(note_text)
+                        logger.debug(
+                            f"Extracted note for state '{state_id}': {note_text}"
+                        )
+                    # Note-only items (no doc, no type other than note) can skip state creation
+                    # if we only have an id and a note, no doc
+                    if "doc" not in item and item.get("type") != "divider":
+                        # Still ensure the state exists
+                        scoped_key = self._get_scoped_key(state_id, parent_path)
+                        if scoped_key not in all_states:
+                            state_info = {
+                                "id": state_id,
+                                "type": "default",
+                                "description": "",
+                            }
+                            state = self._create_state(
+                                state_info, parent_id, scoped_id=scoped_key
+                            )
+                            if state:
+                                states[state_id] = state
+                                all_states[scoped_key] = state
+                        else:
+                            states[state_id] = all_states[scoped_key]
+                        continue
 
                 # Check if this is a divider (parallel region marker)
                 if item.get("type") == "divider":
@@ -765,7 +808,10 @@ class StateDiagramConverter:
                         to_state = new_state
                     elif parent_id:
                         # Check if state is declared elsewhere first
-                        if hasattr(self, 'state_declarations_map') and to_id in self.state_declarations_map:
+                        if (
+                            hasattr(self, "state_declarations_map")
+                            and to_id in self.state_declarations_map
+                        ):
                             declared_parent = self.state_declarations_map[to_id]
                             if declared_parent is None:
                                 # Declared at root level - use unscoped name
