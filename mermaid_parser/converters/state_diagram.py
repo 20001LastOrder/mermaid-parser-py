@@ -743,11 +743,29 @@ class StateDiagramConverter:
                         all_states[scoped_key] = new_state
                         from_state = new_state
                     else:
-                        # Root level state: use unscoped key
+                        # Root level: Check if state is declared elsewhere first
+                        if (
+                            hasattr(self, "state_declarations_map")
+                            and from_id in self.state_declarations_map
+                        ):
+                            declared_parent = self.state_declarations_map[from_id]
+                            if declared_parent is None:
+                                # Declared at root level - use unscoped name
+                                scoped_key = from_id
+                                actual_parent_id = None
+                            else:
+                                # Declared in a composite state - use that parent's scope
+                                scoped_key = f"{declared_parent}_{from_id}"
+                                actual_parent_id = declared_parent
+                        else:
+                            # Not found in declarations - create at root level (fallback)
+                            scoped_key = from_id
+                            actual_parent_id = None
+
                         new_state = self._create_state(
-                            state1_info, parent_id=None, scoped_id=from_id
+                            state1_info, actual_parent_id, scoped_id=scoped_key
                         )
-                        all_states[from_id] = new_state
+                        all_states[scoped_key] = new_state
                         from_state = new_state
 
                     # Always add the new state to current_states
@@ -836,11 +854,29 @@ class StateDiagramConverter:
                         all_states[scoped_key] = new_state
                         to_state = new_state
                     else:
-                        # Root level state: use unscoped key
+                        # Root level: Check if state is declared elsewhere first
+                        if (
+                            hasattr(self, "state_declarations_map")
+                            and to_id in self.state_declarations_map
+                        ):
+                            declared_parent = self.state_declarations_map[to_id]
+                            if declared_parent is None:
+                                # Declared at root level - use unscoped name
+                                scoped_key = to_id
+                                actual_parent_id = None
+                            else:
+                                # Declared in a composite state - use that parent's scope
+                                scoped_key = f"{declared_parent}_{to_id}"
+                                actual_parent_id = declared_parent
+                        else:
+                            # Not found in declarations - create at root level (fallback)
+                            scoped_key = to_id
+                            actual_parent_id = None
+
                         new_state = self._create_state(
-                            state2_info, parent_id=None, scoped_id=to_id
+                            state2_info, actual_parent_id, scoped_id=scoped_key
                         )
-                        all_states[to_id] = new_state
+                        all_states[scoped_key] = new_state
                         to_state = new_state
 
                     # Always add the new state to current_states
