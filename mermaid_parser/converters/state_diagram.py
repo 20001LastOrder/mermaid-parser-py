@@ -177,6 +177,13 @@ class StateDiagramConverter:
             if item.get("stmt") == "state":
                 state_id = item["id"]
                 if item.get("type") == "divider":
+                    # Recurse into divider (parallel region) docs so that states
+                    # nested inside parallel regions are pre-scanned with the correct
+                    # fully-qualified path before any transitions are resolved.
+                    if "doc" in item:
+                        self._prescan_state_declarations(
+                            item["doc"], all_states, parent_id, parent_path
+                        )
                     continue
 
                 scoped_key = self._get_scoped_key(state_id, parent_path)
