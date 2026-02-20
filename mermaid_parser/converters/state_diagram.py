@@ -185,14 +185,21 @@ class StateDiagramConverter:
                     if state:
                         all_states[scoped_key] = state
 
-                        # If this is a composite state, recursively pre-scan its content
-                        if "doc" in item:
-                            new_parent_path = (
-                                f"{parent_path}_{state_id}" if parent_path else state_id
-                            )
-                            self._prescan_state_declarations(
-                                item["doc"], all_states, state_id, new_parent_path
-                            )
+                # Always recurse into composite doc regardless of whether the state
+                # was just created or was already registered (e.g., via its string
+                # shorthand earlier in the same doc).  Without this, a state like
+                #   STRING: 'On'
+                #   stmt='state' id='On' has_doc=True
+                # would leave On's children (e.g., On_Active_Printing) un-created,
+                # causing transition resolution to fall back to creating a spurious
+                # "Active_Printing" pseudo-state.
+                if "doc" in item:
+                    new_parent_path = (
+                        f"{parent_path}_{state_id}" if parent_path else state_id
+                    )
+                    self._prescan_state_declarations(
+                        item["doc"], all_states, state_id, new_parent_path
+                    )
 
     def _prescan_all_state_declarations_from_text(
         self, mermaid_text: str
@@ -601,37 +608,49 @@ class StateDiagramConverter:
                 if parent_scoped_key in all_states:
                     return all_states[parent_scoped_key], parent_scoped_key
 
-        # Check child scopes - DISABLED for now
-        # The child scope search was causing issues where states that should be created
-        # at the current level were instead being found in child scopes where they
-        # happened to be referenced first.
+        # Search descendant scopes - handles cross-scope transitions like
+        # "LoggedIn --> Printing" where Printing is nested inside a child composite
+        # (e.g., On_LoggedIn_Active_Printing).
         #
-        # For example, if Idle is defined at LoggedIn level but also referenced inside
-        # Suspended (a child of LoggedIn), the child scope search would incorrectly
-        # find Idle at Suspended level before LoggedIn processed its transitions.
-        #
-        # TODO: Re-enable child scope search with proper state declaration tracking
-        # if parent_path:
-        #     search_prefix = f"{parent_path}_"
-        #     search_suffix = f"_{state_id}"
-        #     for key, state in all_states.items():
-        #         if (
-        #             key.startswith(search_prefix)
-        #             and key.endswith(search_suffix)
-        #             and hasattr(state, "id_")
-        #             and state.id_ == state_id
-        #         ):
-        #             return state, key
-        # else:
-        #     # At root level, search for any key ending with the state_id
-        #     search_suffix = f"_{state_id}"
-        #     for key, state in all_states.items():
-        #         if (
-        #             key.endswith(search_suffix)
-        #             and hasattr(state, "id_")
-        #             and state.id_ == state_id
-        #         ):
-        #             return state, key
+        # This search was previously disabled because pre-scanning was not yet in place
+        # and states could be created at the wrong level before all declarations were
+        # known.  Now that PASS 0 (_prescan_state_declarations) registers every
+        # explicitly declared state before any transition is resolved, it is safe to
+        # search descendant scopes here.  We collect ALL matching descendants and
+        # return the shallowest one (shortest key) to pick the nearest match when the
+        # same name exists at multiple nesting levels.
+        if parent_path:
+            search_prefix = f"{parent_path}_"
+            search_suffix = f"_{state_id}"
+            candidates = [
+                (key, state)
+                for key, state in all_states.items()
+                if key.startswith(search_prefix)
+                and key.endswith(search_suffix)
+                and hasattr(state, "id_")
+                and state.id_ == state_id
+            ]
+            if candidates:
+                # Return the shallowest (fewest path components) match
+                best_key, best_state = min(
+                    candidates, key=lambda kv: len(kv[0].split("_"))
+                )
+                return best_state, best_key
+        else:
+            # At root level, search for any key ending with the state_id
+            search_suffix = f"_{state_id}"
+            candidates = [
+                (key, state)
+                for key, state in all_states.items()
+                if key.endswith(search_suffix)
+                and hasattr(state, "id_")
+                and state.id_ == state_id
+            ]
+            if candidates:
+                best_key, best_state = min(
+                    candidates, key=lambda kv: len(kv[0].split("_"))
+                )
+                return best_state, best_key
 
         # Check related scopes - search for this state in ANCESTOR scopes only
         # Only do this if allow_sibling_search is True
@@ -655,18 +674,6 @@ class StateDiagramConverter:
                     elif not state_scope:
                         # Root level state
                         return state, key
-
-        # If we're at root level (parent_path is None), search all scopes for this state
-        # This handles cases where a state is defined in a nested scope but referenced from root
-        if parent_path is None:
-            for key, state in all_states.items():
-                # Check if this key ends with the state_id and the state's id_ matches
-                if (
-                    (key.endswith(f"_{state_id}") or key == state_id)
-                    and hasattr(state, "id_")
-                    and state.id_ == state_id
-                ):
-                    return state, key
 
         return None, None
 
