@@ -2,54 +2,48 @@ stateDiagram-v2
     [*] --> SpaSystem
     
     state SpaSystem {
-        --
-        state Sauna {
+        region Sauna{
             [*] --> SaunaOff
             SaunaOff --> SaunaOn : turnOn
             SaunaOn --> SaunaOff : turnOff
-            
+
             state SaunaOn {
-                --
-                state HeatingControl {
+                region HeatingControl{
                     [*] --> Heating
                     Heating --> NotHeating : [temp >= 90]
                     NotHeating --> Heating : [temp < 85]
                 }
-                --
-                state HumidityControl {
+                region HumidityControl{
                     [*] --> Normal
                     Normal --> HighHumidity : [humidity > 40] / startTimer
                     HighHumidity --> FanActive : after(3min)
                     FanActive --> Normal : after(5min)
-                    
+
                     Normal --> Normal : dispenseWater [humidity < 40 && !fanActive && timeSinceLastDispense >= 15min]
                 }
             }
         }
-        --
-        state Jacuzzi {
+        region Jacuzzi{
             [*] --> JacuzziOff
             JacuzziOff --> JacuzziOn : turnOn
             JacuzziOn --> JacuzziOff : turnOff
-            
+
             state JacuzziOn {
-                --
-                state PressureControl {
+                region PressureControl{
                     [*] --> Level1
                     Level1 --> Level2 : increasePressure
                     Level2 --> Level3 : increasePressure
                     Level3 --> Level2 : decreasePressure
                     Level2 --> Level1 : decreasePressure
                 }
-                --
-                state OperationControl {
+                region OperationControl{
                     [*] --> Running
                     Running --> Paused : pause
                     Paused --> Running : after(2min)
                     Running --> Running : selectPattern(n) [1 <= n <= 25]
                 }
             }
-            
+
             note right of OperationControl
                 pause/resume transitions maintain history state
             end note

@@ -7,22 +7,19 @@ stateDiagram-v2
         [*] --> Configuration
 
         state Configuration {
-            --
-            state CourseSelection {
+            region CourseSelection{
                 [*] --> Course1
                 Course1 --> Course2 : menu
                 Course2 --> Course3 : menu
                 Course3 --> Course1 : menu
             }
-            --
-            state CrustSelection {
+            region CrustSelection{
                 [*] --> Medium
                 Medium --> Dark : crust
                 Dark --> Light : crust
                 Light --> Medium : crust
             }
-            --
-            state TimerSetting {
+            region TimerSetting{
                 [*] --> NoDelay
                 NoDelay --> DelaySet : plus / timer+=10
                 DelaySet --> DelaySet : plus [timer<1080] / timer+=10
