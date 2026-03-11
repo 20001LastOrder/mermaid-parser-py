@@ -188,6 +188,40 @@ class StateDiagramConverter:
 
                 scoped_key = self._get_scoped_key(state_id, parent_path)
                 if scoped_key not in all_states:
+                    # For items without a doc (leaf states, including note-only references),
+                    # do NOT create a spurious scoped state when the real declaration already
+                    # exists as a descendant in a deeper composite.  Example: a
+                    # "note right of Kneading" written inside On (parent_path="On") should
+                    # NOT register "On_Kneading" when "On_BakingProcess_Kneading" was
+                    # already registered by the recursive scan of BakingProcess above.
+                    if "doc" not in item:
+                        if parent_path:
+                            desc_prefix = f"{parent_path}_"
+                            desc_suffix = f"_{state_id}"
+                            descendant_exists = any(
+                                k.startswith(desc_prefix) and k.endswith(desc_suffix)
+                                and hasattr(all_states[k], "id_")
+                                and all_states[k].id_ == state_id
+                                for k in all_states
+                            )
+                        else:
+                            desc_suffix = f"_{state_id}"
+                            descendant_exists = any(
+                                k.endswith(desc_suffix)
+                                and hasattr(all_states[k], "id_")
+                                and all_states[k].id_ == state_id
+                                for k in all_states
+                            )
+                        if descendant_exists:
+                            # Skip – the real state lives in a child composite scope
+                            if "doc" in item:
+                                new_parent_path = (
+                                    f"{parent_path}_{state_id}" if parent_path else state_id
+                                )
+                                self._prescan_state_declarations(
+                                    item["doc"], all_states, state_id, new_parent_path
+                                )
+                            continue
                     state = self._create_state(item, parent_id, scoped_id=scoped_key)
                     if state:
                         all_states[scoped_key] = state
@@ -347,22 +381,32 @@ class StateDiagramConverter:
                     # Note-only items (no doc, no type other than note) can skip state creation
                     # if we only have an id and a note, no doc
                     if "doc" not in item and item.get("type") != "divider":
-                        # Still ensure the state exists
-                        scoped_key = self._get_scoped_key(state_id, parent_path)
-                        if scoped_key not in all_states:
-                            state_info = {
-                                "id": state_id,
-                                "type": "default",
-                                "description": "",
-                            }
-                            state = self._create_state(
-                                state_info, parent_id, scoped_id=scoped_key
-                            )
-                            if state:
-                                states[state_id] = state
-                                all_states[scoped_key] = state
+                        # Still ensure the state exists.
+                        # IMPORTANT: search across all scopes first so that a note referencing
+                        # a state declared in a child composite (e.g., "note right of Kneading"
+                        # written inside On while Kneading lives inside On > BakingProcess) does
+                        # NOT create a spurious "On_Kneading" state that shadows the real one.
+                        existing_state, _ = self._find_state_in_all_states(
+                            state_id, parent_path, all_states
+                        )
+                        if existing_state is not None:
+                            states[state_id] = existing_state
                         else:
-                            states[state_id] = all_states[scoped_key]
+                            scoped_key = self._get_scoped_key(state_id, parent_path)
+                            if scoped_key not in all_states:
+                                state_info = {
+                                    "id": state_id,
+                                    "type": "default",
+                                    "description": "",
+                                }
+                                state = self._create_state(
+                                    state_info, parent_id, scoped_id=scoped_key
+                                )
+                                if state:
+                                    states[state_id] = state
+                                    all_states[scoped_key] = state
+                            else:
+                                states[state_id] = all_states[scoped_key]
                         continue
 
                 # Check if this is a divider (parallel region marker)
