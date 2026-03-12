@@ -32,20 +32,57 @@ class StateDiagramConverter:
         )  # Maps (from_state, trigger) -> target_composite_state for history
         self.state_notes = {}  # Maps state ID -> list of note text strings
 
+    def _preprocess_region_syntax(self, mermaid_text: str) -> str:
+        """
+        Transform new 'region Name{...}' syntax to Mermaid '--' parallel region syntax.
+
+        Transformation rule:
+            region RegionName{
+                content
+            }
+        becomes:
+            --
+            state RegionName {
+                content
+            }
+
+        The closing '}' is unchanged. Only the 'region Name{' line is transformed.
+        """
+        result = []
+        for line in mermaid_text.split('\n'):
+            # Match: region <Name> { (with optional spaces before {)
+            m = re.match(r'^(\s*)region\s+(\w+)\s*\{(.*)$', line)
+            if m:
+                indent, name, rest = m.group(1), m.group(2), m.group(3)
+                # Insert -- separator line
+                result.append(f"{indent}--")
+                # Replace with state declaration
+                if rest.strip():
+                    result.append(f"{indent}state {name} {{{rest}")
+                else:
+                    result.append(f"{indent}state {name} {{")
+            else:
+                result.append(line)
+
+        return '\n'.join(result)
+
     def convert(self, mermaid_text: str) -> ExtendedStateDiagram:
         # Reset history state tracking for each conversion
         self.history_states = {}
         self.history_transitions = {}
         self.state_notes = {}
 
+        # NEW: Transform region Name{...} syntax to Mermaid -- syntax
+        preprocessed_text = self._preprocess_region_syntax(mermaid_text)
+
         # Pre-scan the raw mermaid text to find where each state is declared
         # This solves forward reference issues where states are used before being declared
         self.state_declarations_map = self._prescan_all_state_declarations_from_text(
-            mermaid_text
+            preprocessed_text
         )
 
         # TODO: the current parser does not handle rendering styles
-        parsed_data = self.parser.parse(mermaid_text)
+        parsed_data = self.parser.parse(preprocessed_text)
         graph_type = parsed_data.get("graph_type")
         if "stateDiagram" not in graph_type:
             raise ValueError(f"Unsupported graph type: {graph_type}")
@@ -470,6 +507,11 @@ class StateDiagramConverter:
             parallel_info = self._process_parallel_regions(
                 divider_regions, all_states, parent_id, parent_path
             )
+
+            # NEW: Validate that transitions don't cross region boundaries
+            if parent_id:
+                self._validate_region_boundaries(parallel_info, parent_id)
+
             # Add the parallel region states and transitions
             for region_data in parallel_info:
                 states.update(region_data["states"])
@@ -947,6 +989,44 @@ class StateDiagramConverter:
                 transitions.append(transition)
 
         return transitions
+
+    def _validate_region_boundaries(
+        self, parallel_info: list[dict], parent_id: str
+    ):
+        """
+        Validate that no transition crosses parallel region boundaries.
+
+        Each region is a strict scope. Transitions inside a region must not target
+        states in a different (sibling) region.
+
+        Raises ValueError if a cross-region transition is detected.
+        """
+        # Map each state ID to its region index
+        state_to_region = {}
+        for idx, region in enumerate(parallel_info):
+            for state_id in region['states']:
+                state_to_region[state_id] = idx
+
+        # Check each region's transitions for cross-region violations
+        for idx, region in enumerate(parallel_info):
+            region_name = region.get('name', f'region_{idx}')
+            for trans in region['transitions']:
+                to_state = getattr(trans, 'to_state', None)
+                if not to_state:
+                    continue
+
+                to_scoped = getattr(to_state, 'scoped_id', getattr(to_state, 'id_', None))
+                to_id = getattr(to_state, 'id_', None)
+
+                # Check if target is in a different region
+                target_region = state_to_region.get(to_scoped, state_to_region.get(to_id))
+                if target_region is not None and target_region != idx:
+                    sibling_name = parallel_info[target_region].get('name', f'region_{target_region}')
+                    raise ValueError(
+                        f"Cross-region transition in '{parent_id}': "
+                        f"region '{region_name}' cannot target state '{to_id}' in region '{sibling_name}'. "
+                        f"States and transitions belong exclusively to their enclosing region."
+                    )
 
     def _process_parallel_regions(
         self,

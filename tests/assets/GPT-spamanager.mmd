@@ -2,8 +2,7 @@ stateDiagram-v2
     [*] --> SpaManager
 
     state SpaManager {
-        --
-        state Sauna {
+        region Sauna{
             [*] --> Off
             Off --> Heating : on
             Heating --> Off : off
@@ -14,8 +13,7 @@ stateDiagram-v2
             Heating --> WaterDispersion : requestWater [humidity < 40% && !fanActive] / {dispenseWater()}
             WaterDispersion --> Heating : after(15)
         }
-        --
-        state Jacuzzi {
+        region Jacuzzi{
             [*] --> Off
             Off --> Level1 : on
             Level1 --> Off : off
